@@ -16,6 +16,11 @@ const (
 	exportApiSecretFlag         = "export-api-secret"
 	exportApiRoleFlag           = "export-api-role"
 	exportPathPrefixFlag        = "export-path-prefix"
+
+	// torrent-http-proxy signing for external playback URLs
+	exportProxyApiKeyFlag    = "export-proxy-api-key"
+	exportProxyApiSecretFlag = "export-proxy-api-secret"
+	exportProxyTokenTtlFlag  = "export-proxy-token-ttl"
 )
 
 const (
@@ -88,6 +93,24 @@ func RegisterExportFlags(f []cli.Flag) []cli.Flag {
 			Usage:  "export path prefix",
 			EnvVar: "EXPORT_PATH_PREFIX",
 			Value:  "/",
+		},
+		cli.StringFlag{
+			Name:   exportProxyApiKeyFlag,
+			Usage:  "torrent-http-proxy api key (used to sign export URLs for external players)",
+			EnvVar: "EXPORT_PROXY_API_KEY",
+			Value:  "",
+		},
+		cli.StringFlag{
+			Name:   exportProxyApiSecretFlag,
+			Usage:  "torrent-http-proxy api secret (used to sign export URLs for external players)",
+			EnvVar: "EXPORT_PROXY_API_SECRET",
+			Value:  "",
+		},
+		cli.IntFlag{
+			Name:   exportProxyTokenTtlFlag,
+			Usage:  "torrent-http-proxy token TTL in seconds (default: 600)",
+			EnvVar: "EXPORT_PROXY_TOKEN_TTL",
+			Value:  600,
 		},
 	)
 }

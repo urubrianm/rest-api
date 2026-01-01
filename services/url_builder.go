@@ -1,10 +1,16 @@
 package services
 
 import (
+	"crypto/hmac"
 	"crypto/sha1"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dgrijalva/jwt-go"
 	"github.com/pkg/errors"
@@ -39,9 +45,26 @@ type URLBuilder struct {
 	subdomainsK8SPool string
 	pathPrefix        string
 	premiumDomain     string
+
+	// torrent-http-proxy signing (for external playback links)
+	proxyApiKey          string
+	proxyApiSecret       string
+	proxyTokenTtlSeconds int
 }
 
 func NewURLBuilder(c *cli.Context, sd *Subdomains, cm *CacheMap) *URLBuilder {
+	proxyKey := c.String(exportProxyApiKeyFlag)
+	proxySecret := c.String(exportProxyApiSecretFlag)
+	if proxyKey == "" {
+		proxyKey = os.Getenv("API_KEY")
+	}
+	if proxySecret == "" {
+		proxySecret = os.Getenv("API_SECRET")
+	}
+	ttl := c.Int(exportProxyTokenTtlFlag)
+	if ttl <= 0 {
+		ttl = 600
+	}
 	return &URLBuilder{
 		sd:                sd,
 		cm:                cm,
@@ -53,6 +76,10 @@ func NewURLBuilder(c *cli.Context, sd *Subdomains, cm *CacheMap) *URLBuilder {
 		useSubdomains:     c.BoolT(exportUseSubdomainsFlag),
 		subdomainsK8SPool: c.String(exportSubdomainsK8SPoolFlag),
 		pathPrefix:        c.String(exportPathPrefixFlag),
+
+		proxyApiKey:          proxyKey,
+		proxyApiSecret:       proxySecret,
+		proxyTokenTtlSeconds: ttl,
 	}
 }
 
@@ -71,6 +98,10 @@ func (s *URLBuilder) Build(r *Resource, i *ListItem, g ParamGetter, et ExportTyp
 		useSubdomains:     s.useSubdomains,
 		subdomainsK8SPool: s.subdomainsK8SPool,
 		pathPrefix:        s.pathPrefix,
+
+		proxyApiKey:          s.proxyApiKey,
+		proxyApiSecret:       s.proxyApiSecret,
+		proxyTokenTtlSeconds: s.proxyTokenTtlSeconds,
 	}
 	switch et {
 	case ExportTypeDownload:
@@ -118,6 +149,11 @@ type BaseURLBuilder struct {
 	useSubdomains     bool
 	pathPrefix        string
 	premiumDomain     string
+
+	// torrent-http-proxy signing (for external players)
+	proxyApiKey          string
+	proxyApiSecret       string
+	proxyTokenTtlSeconds int
 }
 
 type DownloadURLBuilder struct {
@@ -242,20 +278,50 @@ func (s *BaseURLBuilder) getRequestID() string {
 	return ""
 }
 
+func (s *BaseURLBuilder) useProxySigning() bool {
+	return s.proxyApiKey != "" && s.proxyApiSecret != ""
+}
+
+func (s *BaseURLBuilder) buildProxyToken(path string, expiresUtc time.Time) string {
+	expUnix := time.Date(expiresUtc.Year(), expiresUtc.Month(), expiresUtc.Day(), expiresUtc.Hour(), expiresUtc.Minute(), expiresUtc.Second(), 0, time.UTC).Unix()
+	payload := s.proxyApiKey + "\n" + path + "\n" + strconv.FormatInt(expUnix, 10)
+	mac := hmac.New(sha256.New, []byte(s.proxyApiSecret))
+	_, _ = mac.Write([]byte(payload))
+	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return sig + "." + strconv.FormatInt(expUnix, 10)
+}
+
+func (s *BaseURLBuilder) applyProxyAuth(u *MyURL) {
+	if !s.useProxySigning() || u == nil {
+		return
+	}
+	expires := time.Now().UTC().Add(time.Duration(s.proxyTokenTtlSeconds) * time.Second)
+	token := s.buildProxyToken(u.Path, expires)
+	q := u.Query()
+	q.Set("api-key", s.proxyApiKey)
+	q.Set("token", token)
+	u.RawQuery = q.Encode()
+}
+
 func (s *BaseURLBuilder) BuildBaseURL(i *MyURL) (u *MyURL, err error) {
 	u = i
 	u.Path = s.pathPrefix + s.r.ID + "/" + strings.Trim(s.i.PathStr, "/")
 	q := u.Query()
-	apiKey := s.getApiKey()
-	if apiKey != "" {
-		q.Add("api-key", apiKey)
-	}
-	token, err := s.getToken()
-	if err != nil {
-		return nil, err
-	}
-	if token != "" {
-		q.Add("token", token)
+	// When proxy signing is enabled, we attach api-key/token *after* all path suffixes
+	// are applied (e.g. ~hls, ~vod, ~arch). The torrent-http-proxy validates the token
+	// against the final request path, so adding it here would sign the wrong path.
+	if !s.useProxySigning() {
+		apiKey := s.getApiKey()
+		if apiKey != "" {
+			q.Add("api-key", apiKey)
+		}
+		token, err := s.getToken()
+		if err != nil {
+			return nil, err
+		}
+		if token != "" {
+			q.Add("token", token)
+		}
 	}
 	userID := s.getUserID()
 	if userID != "" {
@@ -371,6 +437,7 @@ func (s *DownloadURLBuilder) Build() (u *MyURL, err error) {
 	if err != nil {
 		return
 	}
+	s.applyProxyAuth(u)
 	return
 }
 
@@ -392,6 +459,7 @@ func (s *StreamURLBuilder) Build() (u *MyURL, err error) {
 	if err != nil {
 		return
 	}
+	s.applyProxyAuth(u)
 	return
 }
 
@@ -490,6 +558,7 @@ func (s *TorrentStatURLBuilder) Build() (u *MyURL, err error) {
 		return nil, nil
 	}
 	u = s.BuildStatURL(u)
+	s.applyProxyAuth(u)
 	return
 }
 
@@ -520,6 +589,7 @@ func (s *SubtitlesURLBuilder) Build() (u *MyURL, err error) {
 		return
 	}
 	u = s.BuildSubtitlesURL(u)
+	s.applyProxyAuth(u)
 	return
 }
 
@@ -541,6 +611,7 @@ func (s *MediaProbeURLBuilder) Build() (u *MyURL, err error) {
 	if err != nil {
 		return
 	}
+	s.applyProxyAuth(u)
 	if !u.transcode {
 		return nil, nil
 	}
