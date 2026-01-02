@@ -290,11 +290,11 @@ func (s *BaseURLBuilder) buildProxyToken(path string, expiresUtc time.Time) stri
 		"path":    path,
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	s, err := token.SignedString([]byte(s.proxyApiSecret))
+	signed, err := token.SignedString([]byte(s.proxyApiSecret))
 	if err != nil {
 		return ""
 	}
-	return s
+	return signed
 }
 
 func (s *BaseURLBuilder) applyProxyAuth(u *MyURL) {
