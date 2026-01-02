@@ -1,14 +1,10 @@
 package services
 
 import (
-	"crypto/hmac"
 	"crypto/sha1"
-	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -64,6 +60,10 @@ func NewURLBuilder(c *cli.Context, sd *Subdomains, cm *CacheMap) *URLBuilder {
 	ttl := c.Int(exportProxyTokenTtlFlag)
 	if ttl <= 0 {
 		ttl = 600
+	}
+	prefix := os.Getenv("EXPORT_PATH_PREFIX")
+	if prefix == "" {
+		prefix = "/torrent-http-proxy/"
 	}
 	return &URLBuilder{
 		sd:                sd,
@@ -282,13 +282,28 @@ func (s *BaseURLBuilder) useProxySigning() bool {
 	return s.proxyApiKey != "" && s.proxyApiSecret != ""
 }
 
+// buildProxyToken builds a token that the torrent-http-proxy can parse.
+//
+// Some deployments validate the `token` query parameter as a JWT (3 segments).
+// The previous HMAC format (sig.exp) breaks such parsers with:
+//   "token contains an invalid number of segments"
+//
+// To keep compatibility with those proxies, we sign a JWT using EXPORT_PROXY_API_SECRET.
+// We include the `exp` claim and also embed the signed request `path` and `api_key`
+// so a proxy can optionally validate them.
 func (s *BaseURLBuilder) buildProxyToken(path string, expiresUtc time.Time) string {
 	expUnix := time.Date(expiresUtc.Year(), expiresUtc.Month(), expiresUtc.Day(), expiresUtc.Hour(), expiresUtc.Minute(), expiresUtc.Second(), 0, time.UTC).Unix()
-	payload := s.proxyApiKey + "\n" + path + "\n" + strconv.FormatInt(expUnix, 10)
-	mac := hmac.New(sha256.New, []byte(s.proxyApiSecret))
-	_, _ = mac.Write([]byte(payload))
-	sig := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	return sig + "." + strconv.FormatInt(expUnix, 10)
+	claims := jwt.MapClaims{}
+	claims["exp"] = expUnix
+	claims["path"] = path
+	claims["api_key"] = s.proxyApiKey
+	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := t.SignedString([]byte(s.proxyApiSecret))
+	if err != nil {
+		// In the unlikely case signing fails, fall back to empty token.
+		return ""
+	}
+	return tokenString
 }
 
 func (s *BaseURLBuilder) applyProxyAuth(u *MyURL) {
