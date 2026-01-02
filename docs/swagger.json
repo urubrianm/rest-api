@@ -198,7 +198,8 @@
                             "stream",
                             "torrent_client_stat",
                             "subtitles",
-                            "media_probe"
+                            "media_probe",
+                            "android_player"
                         ],
                         "type": "string",
                         "description": "output",
@@ -227,6 +228,122 @@
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/services.ExportResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/services.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/services.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/services.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/resource/{resource_id}/android-player": {
+            "get": {
+                "description": "Generates a ready-to-play HLS url (and optional subtitles) for Android players.",
+                "consumes": [
+                    "*/*"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "android"
+                ],
+                "summary": "Android player export by path",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "example": "\"08ada5a7a6183aae1e09d831df6748d566095a10\"",
+                        "description": "resource_id",
+                        "name": "resource_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "path inside resource (optional; if omitted the first playable video is selected)",
+                        "name": "path",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.AndroidPlayerResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/services.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/services.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/services.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/resource/{resource_id}/android-player/{content_id}": {
+            "get": {
+                "description": "Generates a ready-to-play HLS url (and optional subtitles) for Android players.",
+                "consumes": [
+                    "*/*"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "android"
+                ],
+                "summary": "Android player export by content id",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "example": "\"08ada5a7a6183aae1e09d831df6748d566095a10\"",
+                        "description": "resource_id",
+                        "name": "resource_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "example": "\"ca2453df3e7691c28934eebed5a253ee0aabd29f\"",
+                        "description": "content_id",
+                        "name": "content_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/services.AndroidPlayerResponse"
                         }
                     },
                     "400": {
@@ -321,6 +438,29 @@
         }
     },
     "definitions": {
+        "services.AndroidPlayerResponse": {
+            "type": "object",
+            "properties": {
+                "hls_url": {
+                    "type": "string"
+                },
+                "meta": {
+                    "$ref": "#/definitions/services.ExportMeta"
+                },
+                "mime_type": {
+                    "type": "string"
+                },
+                "source": {
+                    "$ref": "#/definitions/services.ListItem"
+                },
+                "subtitles": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
         "services.ErrorResponse": {
             "type": "object",
             "properties": {

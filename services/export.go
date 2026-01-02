@@ -123,6 +123,9 @@ const (
 	ExportTypeTorrentStat ExportType = "torrent_client_stat"
 	ExportTypeSubtitles   ExportType = "subtitles"
 	ExportTypeMediaProbe  ExportType = "media_probe"
+	// ExportTypeAndroid is a convenience export that points to a REST endpoint returning
+	// a ready-to-play HLS URL for Android players.
+	ExportTypeAndroid ExportType = "android_player"
 )
 
 var ExportTypes = []ExportType{
@@ -131,6 +134,7 @@ var ExportTypes = []ExportType{
 	ExportTypeTorrentStat,
 	ExportTypeSubtitles,
 	ExportTypeMediaProbe,
+	ExportTypeAndroid,
 }
 
 type ExportGetArgs struct {
@@ -230,6 +234,17 @@ type TorrentStatExporter struct {
 
 type SubtitlesExporter struct {
 	BaseExporter
+}
+
+// AndroidPlayerExporter returns a URL to the REST endpoint that generates a
+// player-friendly HLS URL (and optional subtitles) for Android clients.
+//
+// Why this exists:
+// - The regular `stream` export is only returned for media items.
+// - For directory items (like a season folder), clients still need a stable
+//   endpoint to request a playable URL once they pick a file.
+type AndroidPlayerExporter struct {
+	ub *URLBuilder
 }
 
 func NewDownloadExporter(ub *URLBuilder) *DownloadExporter {
@@ -340,6 +355,60 @@ func NewSubtitlesExporter(c *cli.Context, ub *URLBuilder) *SubtitlesExporter {
 			exportType: ExportTypeSubtitles,
 		},
 	}
+}
+
+func NewAndroidPlayerExporter(ub *URLBuilder) *AndroidPlayerExporter {
+	return &AndroidPlayerExporter{ub: ub}
+}
+
+func (s *AndroidPlayerExporter) Type() ExportType {
+	return ExportTypeAndroid
+}
+
+func (s *AndroidPlayerExporter) Export(r *Resource, i *ListItem, g ParamGetter) (*ExportItem, error) {
+	// Build absolute URL to this rest-api endpoint.
+	bubc := BaseURLBuilder{
+		sd:                s.ub.sd,
+		cm:                s.ub.cm,
+		r:                 r,
+		i:                 i,
+		g:                 g,
+		domain:            s.ub.domain,
+		premiumDomain:     s.ub.premiumDomain,
+		apiKey:            s.ub.apiKey,
+		apiSecret:         s.ub.apiSecret,
+		apiRole:           s.ub.apiRole,
+		useSubdomains:     s.ub.useSubdomains,
+		subdomainsK8SPool: s.ub.subdomainsK8SPool,
+		pathPrefix:        s.ub.pathPrefix,
+	}
+
+	u := &MyURL{}
+	var err error
+	u, err = bubc.BuildScheme(u)
+	if err != nil {
+		return nil, err
+	}
+	u, err = bubc.BuildDomain(u)
+	if err != nil {
+		return nil, err
+	}
+
+	// Keep it stable: always point to the android-player endpoint.
+	u.Path = "/resource/" + r.ID + "/android-player"
+	q := u.Query()
+
+	// If the export is requested for a specific content item (file), include its
+	// relative path so Android can call this directly without an extra lookup.
+	if i != nil && i.Type != ListTypeDirectory && strings.Trim(i.PathStr, "/") != "" {
+		q.Set("path", strings.Trim(i.PathStr, "/"))
+	}
+	u.RawQuery = q.Encode()
+
+	return &ExportItem{
+		Type: string(s.Type()),
+		URL:  u.String(),
+	}, nil
 }
 
 func (s *SubtitlesExporter) Export(r *Resource, i *ListItem, g ParamGetter) (*ExportItem, error) {

@@ -282,28 +282,19 @@ func (s *BaseURLBuilder) useProxySigning() bool {
 	return s.proxyApiKey != "" && s.proxyApiSecret != ""
 }
 
-// buildProxyToken builds a token that the torrent-http-proxy can parse.
-//
-// Some deployments validate the `token` query parameter as a JWT (3 segments).
-// The previous HMAC format (sig.exp) breaks such parsers with:
-//   "token contains an invalid number of segments"
-//
-// To keep compatibility with those proxies, we sign a JWT using EXPORT_PROXY_API_SECRET.
-// We include the `exp` claim and also embed the signed request `path` and `api_key`
-// so a proxy can optionally validate them.
 func (s *BaseURLBuilder) buildProxyToken(path string, expiresUtc time.Time) string {
 	expUnix := time.Date(expiresUtc.Year(), expiresUtc.Month(), expiresUtc.Day(), expiresUtc.Hour(), expiresUtc.Minute(), expiresUtc.Second(), 0, time.UTC).Unix()
-	claims := jwt.MapClaims{}
-	claims["exp"] = expUnix
-	claims["path"] = path
-	claims["api_key"] = s.proxyApiKey
-	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := t.SignedString([]byte(s.proxyApiSecret))
+	claims := jwt.MapClaims{
+		"api_key": s.proxyApiKey,
+		"exp":     expUnix,
+		"path":    path,
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	s, err := token.SignedString([]byte(s.proxyApiSecret))
 	if err != nil {
-		// In the unlikely case signing fails, fall back to empty token.
 		return ""
 	}
-	return tokenString
+	return s
 }
 
 func (s *BaseURLBuilder) applyProxyAuth(u *MyURL) {

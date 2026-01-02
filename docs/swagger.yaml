@@ -1,4 +1,19 @@
 definitions:
+  services.AndroidPlayerResponse:
+    properties:
+      hls_url:
+        type: string
+      meta:
+        $ref: '#/definitions/services.ExportMeta'
+      mime_type:
+        type: string
+      source:
+        $ref: '#/definitions/services.ListItem'
+      subtitles:
+        items:
+          type: string
+        type: array
+    type: object
   services.ErrorResponse:
     properties:
       error:
@@ -306,6 +321,7 @@ paths:
         - torrent_client_stat
         - subtitles
         - media_probe
+        - android_player
         in: query
         name: output
         type: string
@@ -343,6 +359,84 @@ paths:
       summary: Exports resource content
       tags:
       - export
+  /resource/{resource_id}/android-player:
+    get:
+      consumes:
+      - '*/*'
+      description: Generates a ready-to-play HLS url (and optional subtitles) for Android players.
+      parameters:
+      - description: resource_id
+        example: '"08ada5a7a6183aae1e09d831df6748d566095a10"'
+        in: path
+        name: resource_id
+        required: true
+        type: string
+      - description: path inside resource (optional; if omitted the first playable video is selected)
+        in: query
+        name: path
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/services.AndroidPlayerResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/services.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/services.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/services.ErrorResponse'
+      summary: Android player export by path
+      tags:
+      - android
+  /resource/{resource_id}/android-player/{content_id}:
+    get:
+      consumes:
+      - '*/*'
+      description: Generates a ready-to-play HLS url (and optional subtitles) for Android players.
+      parameters:
+      - description: resource_id
+        example: '"08ada5a7a6183aae1e09d831df6748d566095a10"'
+        in: path
+        name: resource_id
+        required: true
+        type: string
+      - description: content_id
+        example: '"ca2453df3e7691c28934eebed5a253ee0aabd29f"'
+        in: path
+        name: content_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/services.AndroidPlayerResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/services.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/services.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/services.ErrorResponse'
+      summary: Android player export by content id
+      tags:
+      - android
   /resource/{resource_id}/list:
     get:
       consumes:

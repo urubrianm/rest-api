@@ -195,7 +195,7 @@ func (s *Web) getList(g *gin.Context) {
 
 // @Summary Exports resource content
 // @Description Provides url for exporting resource content.
-// @Param output      query string false "output"      Enums(download, stream, torrent_client_stat, subtitles, media_probe)
+// @Param output      query string false "output"      Enums(download, stream, torrent_client_stat, subtitles, media_probe, android_player)
 // @Param resource_id path  string true  "resource_id" example("08ada5a7a6183aae1e09d831df6748d566095a10")
 // @Param content_id  path  string true  "content_id"  example("ca2453df3e7691c28934eebed5a253ee0aabd29f")
 // @Schemes
@@ -251,12 +251,13 @@ func (s *Web) getExport(g *gin.Context) {
 	g.PureJSON(http.StatusOK, res)
 }
 
+
 // @Summary Android player export by path
-// @Description Provides a direct HLS url for Android players (ExoPlayer/VLC/MX) for a given resource and file path.
+// @Description Returns a simplified payload with a ready-to-play HLS URL (and optional subtitles) for Android players.
 // @Param resource_id path  string true  "resource_id" example("08ada5a7a6183aae1e09d831df6748d566095a10")
-// @Param path        query string true  "path" example("Sintel.mp4")
+// @Param path        query string false "path" description("file path inside the resource; if omitted, the first video file is selected")
 // @Schemes
-// @Tags export
+// @Tags android
 // @Accept */*
 // @Produce json
 // @Success 200 {object} AndroidPlayerResponse
@@ -264,70 +265,63 @@ func (s *Web) getExport(g *gin.Context) {
 // @Failure 404 {object} ErrorResponse
 // @Failure 500 {object} ErrorResponse
 // @Router /resource/{resource_id}/android-player [get]
-func (s *Web) getAndroidPlayerByPath(g *gin.Context) {
-	path := strings.TrimLeft(strings.TrimRight(g.Query("path"), "/"), "/")
-	if path == "" {
-		g.Error(errors.Errorf("failed to parse path"))
-		return
-	}
-
+func (s *Web) getAndroidPlayer(g *gin.Context) {
 	resourceID := strings.ToLower(g.Param("resource_id"))
 	r, err := s.rm.Get(g.Request.Context(), []byte(resourceID))
 	if err != nil {
 		g.Error(err)
 		return
 	}
-
-	// List the parent directory and find the item.
-	parent := ""
-	if idx := strings.LastIndex(path, "/"); idx > -1 {
-		parent = path[:idx]
-	}
-	args := NewListGetArgs()
-	if parent != "" {
-		args.Path = strings.Split(parent, "/")
-	}
-	cr, err := s.c.Get(r, args)
+	cr, err := s.c.Get(r, NewListGetArgs())
 	if err != nil {
 		g.Error(err)
 		return
 	}
-
+	path := strings.Trim(g.Query("path"), " ")
 	var item *ListItem
-	for _, i := range cr.Items {
-		p := strings.TrimLeft(strings.TrimRight(i.PathStr, "/"), "/")
-		if p == path {
-			item = &i
-			break
-		}
-	}
-	if item == nil {
-		// Sometimes PathStr is relative to current dir; match by name.
-		baseName := path
-		if idx := strings.LastIndex(path, "/"); idx > -1 {
-			baseName = path[idx+1:]
-		}
-		for _, i := range cr.Items {
-			if i.Name == baseName {
-				item = &i
+	if path != "" {
+		needle := strings.Trim(path, "/")
+		for _, it := range cr.Items {
+			if strings.Trim(it.PathStr, "/") == needle {
+				item = &it
 				break
 			}
 		}
+		if item == nil && strings.Trim(cr.PathStr, "/") == needle {
+			item = &cr.ListItem
+		}
+	} else {
+		// default: pick the first playable video file
+		for _, it := range cr.Items {
+			if it.MediaFormat == Video {
+				item = &it
+				break
+			}
+		}
+		if item == nil && cr.MediaFormat == Video {
+			item = &cr.ListItem
+		}
 	}
 	if item == nil {
-		g.Error(errors.Errorf("content with path %v not found", path))
+		g.Error(errors.Errorf("content not found"))
 		return
 	}
-
-	s.sendAndroidPlayerResponse(g, r, item)
+	args := &ExportGetArgs{Types: []ExportType{ExportTypeStream, ExportTypeSubtitles}}
+	ex, err := s.e.Get(r, item, args, g)
+	if err != nil {
+		g.Error(err)
+		return
+	}
+	resp := NewAndroidPlayerResponse(ex)
+	g.PureJSON(http.StatusOK, resp)
 }
 
 // @Summary Android player export by content id
-// @Description Provides a direct HLS url for Android players (ExoPlayer/VLC/MX) for a given resource and content id.
-// @Param resource_id path  string true  "resource_id" example("08ada5a7a6183aae1e09d831df6748d566095a10")
-// @Param content_id  path  string true  "content_id"  example("ca2453df3e7691c28934eebed5a253ee0aabd29f")
+// @Description Returns a simplified payload with a ready-to-play HLS URL (and optional subtitles) for Android players.
+// @Param resource_id path  string true "resource_id" example("08ada5a7a6183aae1e09d831df6748d566095a10")
+// @Param content_id  path  string true "content_id"  example("ca2453df3e7691c28934eebed5a253ee0aabd29f")
 // @Schemes
-// @Tags export
+// @Tags android
 // @Accept */*
 // @Produce json
 // @Success 200 {object} AndroidPlayerResponse
@@ -335,7 +329,7 @@ func (s *Web) getAndroidPlayerByPath(g *gin.Context) {
 // @Failure 404 {object} ErrorResponse
 // @Failure 500 {object} ErrorResponse
 // @Router /resource/{resource_id}/android-player/{content_id} [get]
-func (s *Web) getAndroidPlayerByID(g *gin.Context) {
+func (s *Web) getAndroidPlayerByContentID(g *gin.Context) {
 	contentID := strings.ToLower(g.Param("content_id"))
 	if !sha1R.Match([]byte(contentID)) {
 		g.Error(errors.Errorf("failed to parse content id %v", contentID))
@@ -353,9 +347,9 @@ func (s *Web) getAndroidPlayerByID(g *gin.Context) {
 		return
 	}
 	var item *ListItem
-	for _, i := range cr.Items {
-		if i.ID == contentID {
-			item = &i
+	for _, it := range cr.Items {
+		if it.ID == contentID {
+			item = &it
 			break
 		}
 	}
@@ -366,42 +360,37 @@ func (s *Web) getAndroidPlayerByID(g *gin.Context) {
 		g.Error(errors.Errorf("content with id %v not found", contentID))
 		return
 	}
-
-	s.sendAndroidPlayerResponse(g, r, item)
-}
-
-type AndroidPlayerResponse struct {
-	Source    ListItem     `json:"source"`
-	HlsURL    string       `json:"hls_url"`
-	MimeType  string       `json:"mime_type"`
-	SubtitlesURL string     `json:"subtitles_url,omitempty"`
-}
-
-func (s *Web) sendAndroidPlayerResponse(g *gin.Context, r *Resource, item *ListItem) {
-	// Build the same stream URL used by embed/html tags, but return it as a plain payload for Android.
 	args := &ExportGetArgs{Types: []ExportType{ExportTypeStream, ExportTypeSubtitles}}
-	res, err := s.e.Get(r, item, args, g)
+	ex, err := s.e.Get(r, item, args, g)
 	if err != nil {
 		g.Error(err)
 		return
 	}
-	streamItem, ok := res.ExportItems[string(ExportTypeStream)]
-	if !ok || streamItem.URL == "" {
-		g.Error(errors.Errorf("stream export not available"))
-		return
-	}
+	resp := NewAndroidPlayerResponse(ex)
+	g.PureJSON(http.StatusOK, resp)
+}
 
-	var subsURL string
-	if st, ok := res.ExportItems[string(ExportTypeSubtitles)]; ok {
-		subsURL = st.URL
-	}
+type AndroidPlayerResponse struct {
+	Source     ListItem  `json:"source"`
+	HlsURL     string    `json:"hls_url"`
+	MimeType   string    `json:"mime_type"`
+	Subtitles  []string  `json:"subtitles,omitempty"`
+	ExportMeta *ExportMeta `json:"meta,omitempty"`
+}
 
-	g.PureJSON(http.StatusOK, &AndroidPlayerResponse{
-		Source:    *item,
-		HlsURL:    streamItem.URL,
-		MimeType:  "application/vnd.apple.mpegurl",
-		SubtitlesURL: subsURL,
-	})
+func NewAndroidPlayerResponse(ex *ExportResponse) *AndroidPlayerResponse {
+	resp := &AndroidPlayerResponse{Source: ex.Source}
+	if it, ok := ex.ExportItems[string(ExportTypeStream)]; ok {
+		resp.HlsURL = it.URL
+		resp.MimeType = "application/vnd.apple.mpegurl"
+		if it.Meta != nil {
+			resp.ExportMeta = it.Meta
+		}
+	}
+	if it, ok := ex.ExportItems[string(ExportTypeSubtitles)]; ok {
+		resp.Subtitles = []string{it.URL}
+	}
+	return resp
 }
 
 func (s *Web) errorHandler(c *gin.Context) {
@@ -442,8 +431,8 @@ func (s *Web) Serve() error {
 		rg.GET("/:resource_id", s.getResource)
 		rg.GET("/:resource_id/list", s.getList)
 		rg.GET("/:resource_id/export/:content_id", s.getExport)
-		rg.GET("/:resource_id/android-player", s.getAndroidPlayerByPath)
-		rg.GET("/:resource_id/android-player/:content_id", s.getAndroidPlayerByID)
+		rg.GET("/:resource_id/android-player", s.getAndroidPlayer)
+		rg.GET("/:resource_id/android-player/:content_id", s.getAndroidPlayerByContentID)
 	}
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 

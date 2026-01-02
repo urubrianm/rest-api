@@ -116,6 +116,12 @@ func serve(c *cli.Context) error {
 		exporters = append(exporters, mpe)
 	}
 
+	// Setting AndroidPlayerExporter (returns rest-api URL that generates a playable HLS link)
+	ape := s.NewAndroidPlayerExporter(ub)
+	if ape != nil {
+		exporters = append(exporters, ape)
+	}
+
 	// Setting Export
 	ex := s.NewExport(exporters...)
 
